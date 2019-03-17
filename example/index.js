@@ -3,14 +3,74 @@ import React from 'react';
 import { render } from 'react-dom';
 // eslint-disable-next-line import/no-unresolved, import/extensions
 import MonacoEditor from 'react-monaco-editor';
+import { StandaloneCodeEditorServiceImpl } from 'monaco-editor/esm/vs/editor/standalone/browser/standaloneCodeServiceImpl'
 /* eslint-enable import/no-extraneous-dependencies */
+
+
+const targetLogic = `
+  // yoyo
+  function aaa() {
+    console.info('aaaa')
+  }
+  function main() {
+    console.log('===> yo')
+  }
+  function bbb() {
+    console.info('bbba')
+  }
+`
+
+let targetModel;
+
+
+function enhanceMonacoStandaloneCodeEditorServiceImpl(editorServiceImpl) {
+  editorServiceImpl.prototype.doOpenEditor = function (editor, input) {
+    const updateSelection = (_editor) => {
+      const selection = input.options.selection;
+      if (selection) {
+        if (typeof selection.endLineNumber === 'number' && typeof selection.endColumn === 'number') {
+          _editor.setSelection(selection);
+          _editor.revealRangeInCenter(selection, 1 /* Immediate */);
+        } else {
+          const pos = {
+            lineNumber: selection.startLineNumber,
+            column: selection.startColumn
+          };
+          _editor.setPosition(pos);
+          _editor.revealPositionInCenter(pos, 1 /* Immediate */);
+        }
+      }
+    };
+
+    const model = this.findModel(editor, input.resource);
+    if (!model) {
+      if (input.resource) {
+        const schema = input.resource.scheme;
+        if (schema === 'http' || schema === 'https') {
+          // This is a fully qualified http or https URL
+          // dom_1.windowOpenNoOpener(input.resource.toString());
+          shell.openExternal(input.resource.toString());
+          return editor;
+        } else {
+          // open external textDocument
+          console.info('===> open external textDocument', input.resource, input.options.selection)
+          // finderService.touchFile(input.resource, toRange(input.options.selection));
+        }
+      }
+      return null;
+    }
+
+    updateSelection(editor);
+    return editor;
+  };
+}
 
 // Using with webpack
 class CodeEditor extends React.Component {
   constructor(props) {
     super(props);
     this.state = {
-      code: '// type your code... \n',
+      code: 'import { aa } from "bb"; \n app()\n const http = "http://www.baidu.com" \n aa(); \n',
     }
   }
 
@@ -24,6 +84,32 @@ class CodeEditor extends React.Component {
     this.editor = editor;
   }
 
+  editorWillMount = (monaco) => {
+    enhanceMonacoStandaloneCodeEditorServiceImpl(StandaloneCodeEditorServiceImpl);
+    monaco.languages.registerDefinitionProvider('javascript', {
+      provideDefinition: (model, position, token) => {
+        const text = model.getWordAtPosition(position);
+        if (text && text.word === 'app') {
+          targetModel = targetModel || monaco.editor.createModel(targetLogic, 'javascript', monaco.Uri.parse('appLogic://1'));
+          const targetMatches = targetModel.findMatches('main', true, false, true, null, true);
+          let targetRange = null;
+          if (targetMatches.length) {
+            targetRange = targetMatches[0].range;
+          } else {
+            targetRange = new monaco.Range(1, 1, 1, 1)
+          }
+          return {
+            uri: targetModel.uri,
+            range: targetRange,
+          }
+        }
+        return [];
+      }
+    })
+
+
+  }
+
   changeEditorValue = () => {
     if (this.editor) {
       this.editor.setValue('// code changed! \n');
@@ -32,6 +118,32 @@ class CodeEditor extends React.Component {
 
   changeBySetState = () => {
     this.setState({ code: '// code changed by setState! \n' });
+  }
+
+  overrideServices = {
+    textModelService: {
+      createModelReference(uri) {
+        console.info('===> uri', uri)
+        if (uri.scheme === 'appLogic') {
+          return Promise.resolve({
+            object: {
+              textEditorModel: targetModel,
+            },
+            dispose() {
+            }
+          });
+        } else {
+          const textEditorModel = monaco.editor.getModel(uri);
+          return Promise.resolve({
+            object: {
+              textEditorModel,
+            },
+            dispose: () => {
+            }
+          })
+        }
+      },
+    },
   }
 
   render() {
@@ -57,6 +169,8 @@ class CodeEditor extends React.Component {
           options={options}
           onChange={this.onChange}
           editorDidMount={this.editorDidMount}
+          editorWillMount={this.editorWillMount}
+          overrideServices={this.overrideServices}
         />
       </div>
     );

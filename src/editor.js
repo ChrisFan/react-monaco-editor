@@ -5,6 +5,7 @@ import { processSize } from './utils'
 
 function noop() { }
 
+
 class MonacoEditor extends React.Component {
   constructor(props) {
     super(props);
